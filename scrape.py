@@ -13,6 +13,8 @@ import random
 
 load_dotenv()
 password = os.getenv("DB_PASSWORD")
+postgres_srv = os.getenv("POSTGRES_SRV")
+redis_srv = os.getenv("REDIS_SRV")
 
 base_url = "https://starwars.fandom.com/"
 start_url = "https://starwars.fandom.com/sitemap-newsitemapxml-index.xml"
@@ -32,18 +34,17 @@ ignore_urls = [
 ]
 
 
-# Database connection parameters
 db_params = {
     "database": "star_wars_data",
     "user": "postgres",
     "password": password,
-    "host": "192.168.68.40",
+    "host": postgres_srv,
     "port": "5432",
 }
 
 conn_pool = psycopg2.pool.SimpleConnectionPool(1, 1000, **db_params)
 
-redis_conn = redis.Redis(host="192.168.68.40", port=6379, db=0, decode_responses=True)
+redis_conn = redis.Redis(host=redis_srv, port=6379, db=0, decode_responses=True)
 
 
 def run_sql(sql_command, data=None):
