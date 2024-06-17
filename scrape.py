@@ -1,15 +1,16 @@
 import psycopg2
+from bs4 import BeautifulSoup
+from datetime import datetime
+from dotenv import load_dotenv
 from psycopg2 import sql, pool
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-import httpx
 import asyncio
-from bs4 import BeautifulSoup
 import datetime
-import time
+import httpx
 import os
-from dotenv import load_dotenv
-import redis
 import random
+import redis
+import time
 
 load_dotenv()
 password = os.getenv("DB_PASSWORD")
@@ -187,7 +188,7 @@ async def fetch(url, error_file, retry=0):
     return (None, None)
 
 
-async def scrape(url, base_url, error_file="errors.txt"):
+async def scrape(url, base_url, error_file="errors.txt", full_crawl=True):
     global total_processed
     global total_added
     global total_skipped
@@ -195,13 +196,13 @@ async def scrape(url, base_url, error_file="errors.txt"):
         f"\nTotal checked: {len(checked_urls)}, processed: {total_processed} in {time.time() - start_time}s (avg {total_processed/(time.time() - start_time)}/s), added: {total_added}, skipped: {total_skipped}"
     )
     response = None
-    if url_exists(url) is False:
-        try:
-            (response, content_type) = await fetch(url, error_file)
-        except Exception as e:
-            print(f"Error fetching {url}: {e}")
-            write_error_to_file(url, e, error_file)
-            return
+    # if url_exists(url) is False:
+    try:
+        (response, content_type) = await fetch(url, error_file)
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        write_error_to_file(url, e, error_file)
+        return
 
     print("  Processing:", url)
     if response is None:
@@ -210,7 +211,16 @@ async def scrape(url, base_url, error_file="errors.txt"):
     links = []
     if content_type == "xml":
         soup = BeautifulSoup(response.text, "lxml-xml")
-        links = [loc.text for loc in soup.find_all("loc")]
+        if full_crawl:
+            links = [loc.text for loc in soup.find_all("loc")]
+        else:
+            date_threshold = datetime.strptime("2024-04-22", "%Y-%m-%d")
+            links = [
+                url.loc.text
+                for url in soup.find_all("url")
+                if datetime.strptime(url.lastmod.text, "%Y-%m-%dT%H:%M:%SZ")
+                >= date_threshold
+            ]
     else:
         soup = BeautifulSoup(response.text, "html.parser")
         body = soup.find("body")
@@ -234,7 +244,7 @@ async def scrape(url, base_url, error_file="errors.txt"):
             and base_url in url_clean
         ):
             await asyncio.sleep(0.01)
-            tasks.append(scrape(url_clean, base_url, error_file))
+            tasks.append(scrape(url_clean, base_url, error_file, full_crawl))
             print(url_clean)
             if len(tasks) == 15:
                 print(f"Gathering tasks for {url}, count: {len(tasks)}")
@@ -267,11 +277,14 @@ def store_data(title, url, content):
         add_url_to_checked(url)
     else:
         print("  URL already exists in database", url)
+        postgres_update_query = "UPDATE all_data SET Title = %s, Content = %s, Last_Ingested = %s WHERE URL = %s RETURNING *"
+        record_to_update = (title, content, datetime.datetime.now(), url)
+        run_sql(postgres_update_query, record_to_update)
 
 
 async def main():
     preload_checked_urls()
-    await scrape(start_url, base_url)
+    await scrape(start_url, base_url, full_crawl=False)
 
 
 start_time = time.time()
